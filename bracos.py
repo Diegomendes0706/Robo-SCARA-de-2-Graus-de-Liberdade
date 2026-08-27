@@ -115,9 +115,13 @@ def perfil_velocidade(
 
 
 
-def sincronizar_juntas(delta_theta1: float, delta_theta2: float, omega_max: float, alpha_max: float) -> tuple:
+def sincronizar_juntas(
+        delta_theta1: float, delta_theta2: float, omega_max: float, alpha_max: float
+        ) -> tuple:
     """
     Sincroniza os perfis das juntas para que terminem ao mesmo tempo.
+    Retorna as funções de ângulo e velocidade angular de cada junta e o
+    tempo total de movimento.
     """
     _, _, T1 = perfil_velocidade(delta_theta1, omega_max, alpha_max)
     _, _, T2 = perfil_velocidade(delta_theta2, omega_max, alpha_max)
@@ -131,35 +135,47 @@ def sincronizar_juntas(delta_theta1: float, delta_theta2: float, omega_max: floa
     fator1 = T1 / T
     fator2 = T2 / T
     
-    angulo1_sinc, velocidade1_sinc, _ = perfil_velocidade(delta_theta1, omega_max * fator1, alpha_max * (fator1**2))
-    angulo2_sinc, velocidade2_sinc, _ = perfil_velocidade(delta_theta2, omega_max * fator2, alpha_max * (fator2**2))
+    angulo1_sinc, velocidade1_sinc, _ = perfil_velocidade(
+        delta_theta1, omega_max * fator1, alpha_max * (fator1**2)
+        )
+    angulo2_sinc, velocidade2_sinc, _ = perfil_velocidade(
+        delta_theta2, omega_max * fator2, alpha_max * (fator2**2)
+        )
     
     return angulo1_sinc, angulo2_sinc, velocidade1_sinc, velocidade2_sinc, T
 
 
-def mover(modo: str, inicio: list, fim: list, omega_max: float, alpha_max: float
-          ) -> tuple:
+def mover(
+        modo: str, inicio: list, fim: list, omega_max: float, 
+        alpha_max: float, cotovelo: str = 'baixo'
+        ) -> tuple:
     """
-    Move os braços do robô de acordo com o modo especificado.
+    Retorna as funções de ângulo deslocado e velocidade angular de cada junta e o
+    tempo total de movimento.
     """
     modo = modo.lower()
-    if modo == 'd' or modo == 'direta':
+
+    if modo in ['d', 'direta']:
+        theta1_ini, theta2_ini = inicio
         delta_theta1 = fim[0] - inicio[0]
         delta_theta2 = fim[1] - inicio[1]
 
-        angulo1, angulo2, velocidade1, velocidade2, tempo_total = sincronizar_juntas(
-            delta_theta1, delta_theta2, omega_max, alpha_max
-        )
+    elif modo in ['i', 'inversa']:
+        theta1_ini, theta2_ini = cinematica_inversa(inicio[0], inicio[1], cotovelo)
+        theta1_fim, theta2_fim = cinematica_inversa(fim[0], fim[1], cotovelo)
+        
+        delta_theta1 = theta1_fim - theta1_ini
+        delta_theta2 = theta2_fim - theta2_ini  
 
-    if modo == 'i' or modo == 'inversa':
-        delta_x = fim[0] - inicio[0]
-        delta_y = fim[1] - inicio[1]
+    else:
+        raise ValueError("Modo inválido. Use 'direta' ('d') ou 'inversa' ('i').")
 
-        delta_theta1, delta_theta2 = cinematica_inversa(delta_x, delta_y)
+    angulo_girado1, angulo_girado2, velocidade1, velocidade2, tempo_total = sincronizar_juntas(
+    delta_theta1, delta_theta2, omega_max, alpha_max
+    )
 
-        angulo1, angulo2, velocidade1, velocidade2, tempo_total = sincronizar_juntas(
-            delta_theta1, delta_theta2, omega_max, alpha_max
-        )
+    angulo1 = lambda t: angulo_girado1(t) + theta1_ini
+    angulo2 = lambda t: angulo_girado2(t) + theta2_ini
 
     return angulo1, angulo2, velocidade1, velocidade2, tempo_total
 

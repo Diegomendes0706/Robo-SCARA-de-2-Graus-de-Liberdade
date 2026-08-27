@@ -10,18 +10,26 @@ if __name__ == "__main__":
     alpha_max = np.radians(300)  # aceleração angular máxima (rad/s²)
     omega_max = np.radians(90)  # velocidade angular máxima (rad/s)
 
-    thetas_inicial = np.radians([80, 20])  # posição inicial (rad)
+    thetas_inicial = np.radians([60, 30])  # posição inicial (rad)
 
-    theta1_final = np.radians(60)  # deslocamento angular desejado (rad)
+    theta1_final = np.radians(70)  # deslocamento angular desejado (rad)
     theta2_final = np.radians(30)  # deslocamento angular desejado (rad)
 
     posicao_final = np.array([theta1_final, theta2_final])
 
     theta1, theta2, omega1, omega2, tempo_total = mover(
-        'd', thetas_inicial, posicao_final, omega_max, alpha_max
+        'd', thetas_inicial, posicao_final, omega_max, alpha_max,
         )
 
-    tempo = np.linspace(0, tempo_total, 500)
+
+    # pos_inicial = [0.2, 0.15]
+    # pos_final = [0.1414, 0.2914]
+
+    # theta1, theta2, omega1, omega2, tempo_total = mover(
+    #     'i', pos_inicial, pos_final, omega_max, alpha_max
+    # )
+    
+    tempo = np.linspace(0, tempo_total, 1000)
     theta1_vals = [theta1(t) for t in tempo]
     theta2_vals = [theta2(t) for t in tempo]
     omega1_vals = [omega1(t) for t in tempo]

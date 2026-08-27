@@ -1,0 +1,7 @@
+# pontos.csv -- coordenadas da ferramenta (metros), cotovelo: 0=baixo 1=cima
+# x, y, cotovelo
+0.30, 0.00, 0
+0.25, 0.10, 0
+0.20, 0.15, 0
+0.10, 0.25, 0
+0.00, 0.30, 0
