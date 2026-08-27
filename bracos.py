@@ -41,6 +41,7 @@ def cinematica_inversa(x: float, y: float, cotovelo: str = 'baixo') -> tuple:
     if abs(distancia - raio_ext) <= TOLERANCIA:
         cos_theta2 = 1.0
         sen_theta2 = 0.0
+        
     # Singularidade na borda interna (braço dobrado)
     elif abs(distancia - raio_int) <= TOLERANCIA:
         cos_theta2 = -1.0
@@ -135,6 +136,32 @@ def sincronizar_juntas(delta_theta1: float, delta_theta2: float, omega_max: floa
     
     return angulo1_sinc, angulo2_sinc, velocidade1_sinc, velocidade2_sinc, T
 
+
+def mover(modo: str, inicio: list, fim: list, omega_max: float, alpha_max: float
+          ) -> tuple:
+    """
+    Move os braços do robô de acordo com o modo especificado.
+    """
+    modo = modo.lower()
+    if modo == 'd' or modo == 'direta':
+        delta_theta1 = fim[0] - inicio[0]
+        delta_theta2 = fim[1] - inicio[1]
+
+        angulo1, angulo2, velocidade1, velocidade2, tempo_total = sincronizar_juntas(
+            delta_theta1, delta_theta2, omega_max, alpha_max
+        )
+
+    if modo == 'i' or modo == 'inversa':
+        delta_x = fim[0] - inicio[0]
+        delta_y = fim[1] - inicio[1]
+
+        delta_theta1, delta_theta2 = cinematica_inversa(delta_x, delta_y)
+
+        angulo1, angulo2, velocidade1, velocidade2, tempo_total = sincronizar_juntas(
+            delta_theta1, delta_theta2, omega_max, alpha_max
+        )
+
+    return angulo1, angulo2, velocidade1, velocidade2, tempo_total
 
 
 L1 = 0.2    # comprimento do primeiro braço (metros)
