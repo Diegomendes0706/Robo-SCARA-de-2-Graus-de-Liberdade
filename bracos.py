@@ -1,8 +1,9 @@
-from numpy import sin, cos, arctan2, sqrt, clip, sign, degrees, radians
-import pandas as pd
-import csv
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import ttk, messagebox, filedialog
+from numpy import sin, cos, arctan2, sqrt, clip, sign, degrees, radians
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.patches import Circle
 
 def cinematica_direta(theta1: float, theta2: float) -> tuple:
     """
@@ -118,33 +119,34 @@ def perfil_velocidade(
 
 
 
-def sincronizar_juntas(
-        delta_theta1: float, delta_theta2: float, omega_max: float, alpha_max: float
-        ) -> tuple:
+def sincronizar_juntas(delta_theta1: float, delta_theta2: float, omega_max: float, alpha_max: float) -> tuple:
     """
     Sincroniza os perfis das juntas para que terminem ao mesmo tempo.
-    Retorna as funções de ângulo e velocidade angular de cada junta e o
-    tempo total de movimento.
     """
     _, _, T1 = perfil_velocidade(delta_theta1, omega_max, alpha_max)
     _, _, T2 = perfil_velocidade(delta_theta2, omega_max, alpha_max)
 
     T = max(T1, T2)
-    
-    # Se não houver movimento (T = 0), evita erro de divisão
     if T == 0:
-        return lambda t: 0.0, lambda t: 0.0, lambda t: 0.0, lambda t: 0.0, 0.0
+        return (lambda t: 0.0), (lambda t: 0.0), (lambda t: 0.0), (lambda t: 0.0), 0.0
 
-    fator1 = T1 / T
-    fator2 = T2 / T
-    
-    angulo1_sinc, velocidade1_sinc, _ = perfil_velocidade(
-        delta_theta1, omega_max * fator1, alpha_max * (fator1**2)
+    # junta parada: não faz sentido gerar perfil pra ela, ela fica em 0 o tempo todo
+    if T1 == 0:
+        angulo1_sinc, velocidade1_sinc = (lambda t: 0.0), (lambda t: 0.0)
+    else:
+        fator1 = T1 / T
+        angulo1_sinc, velocidade1_sinc, _ = perfil_velocidade(
+            delta_theta1, omega_max * fator1, alpha_max * (fator1**2)
         )
-    angulo2_sinc, velocidade2_sinc, _ = perfil_velocidade(
-        delta_theta2, omega_max * fator2, alpha_max * (fator2**2)
+
+    if T2 == 0:
+        angulo2_sinc, velocidade2_sinc = (lambda t: 0.0), (lambda t: 0.0)
+    else:
+        fator2 = T2 / T
+        angulo2_sinc, velocidade2_sinc, _ = perfil_velocidade(
+            delta_theta2, omega_max * fator2, alpha_max * (fator2**2)
         )
-    
+
     return angulo1_sinc, angulo2_sinc, velocidade1_sinc, velocidade2_sinc, T
 
 
@@ -183,490 +185,1101 @@ def mover(
     return angulo1, angulo2, velocidade1, velocidade2, tempo_total
 
 
-# ==============================================================================
-# INTERFACE GRÁFICA (TKINTER)
-# ==============================================================================
-class Tela:
+class RoboSCARA:
 
     def __init__(self, root):
+
         self.root = root
-        self.root.title("Simulador de um Robô SCARA de 2 Graus de Liberdade")
-        self.root.geometry("900x600")
-        self.root.resizable(False, False)
+
+        self.root.protocol("WM_DELETE_WINDOW", self._ao_fechar)
+
+
+        self.root.title(
+            "SCARA 2GDL - Controle e Cinemática"
+        )
+
+        self.root.geometry(
+            "1200x750"
+        )
+
+        # ----------------------------------------------------
+        # ESTADO ATUAL DO ROBÔ
+        # ----------------------------------------------------
 
         self.theta1_atual = 0.0
         self.theta2_atual = 0.0
 
-        self.rastro_pontos = []
+        self.movendo = False
 
-        self.pontos_carregados = []
+        self.pontos = []
 
-        self.animating = False
-        self.dt = 0.02    # 50 FPS (20ms)
+        self.rastro_x = []
+        self.rastro_y = []
 
-        self._configurar_interface()
-        self._desenhar_espaco_e_robo()
-        self._atualizar_interface_valores()
+        # ----------------------------------------------------
+        # FRAME PRINCIPAL
+        # ----------------------------------------------------
 
-    def _configurar_interface(self):
-        main_frame = ttk.Frame(self.root, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        left_frame = ttk.Frame(main_frame)
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-
-        lbl_canvas = ttk.Label(
-            left_frame,
-            text="AREA DE DESENHO",
-            font=("Arial", 12),
+        self.frame_principal = ttk.Frame(
+            root
         )
 
-        lbl_canvas.pack(anchor=tk.NW, pady=(0, 5))
-
-        self.canvas_size = 500
-        self.canvas = tk.Canvas(
-            left_frame,
-            width=self.canvas_size,
-            height=self.canvas_size,
-            bg="white",
-            relief="sunken",
-            bd=2,
-        )
-        self.canvas.pack()
-
-        # Fator de escala: mapeia metros para pixels (origem no centro do canvas)
-        self.scale = (self.canvas_size / 2) / 0.42
-        self.cx = self.canvas_size / 2
-        self.cy = self.canvas_size / 2
-
-        # DIREITA: Painel de Controle
-        right_frame = ttk.Frame(main_frame, width=320)
-        right_frame.pack(side=tk.RIGHT, fill=tk.Y)
-
-        title_panel = ttk.Label(
-            right_frame,
-            text="Painel de Controle",
-            font=("Arial", 16, "bold"),
-        )
-        title_panel.pack(anchor=tk.NW, pady=(0, 10))
-
-        # 1. Comando por Juntas (CD)
-        cd_frame = ttk.LabelFrame(
-            right_frame, text="Comando por juntas (CD)", padding=8
-        )
-        cd_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(cd_frame, text="θ1 (°):").grid(
-            row=0, column=0, sticky=tk.W, padx=2
-        )
-        self.ent_theta1 = ttk.Entry(cd_frame, width=8)
-        self.ent_theta1.grid(row=0, column=1, padx=5)
-
-        ttk.Label(cd_frame, text="θ2 (°):").grid(
-            row=0, column=2, sticky=tk.W, padx=2
-        )
-        self.ent_theta2 = ttk.Entry(cd_frame, width=8)
-        self.ent_theta2.grid(row=0, column=3, padx=5)
-
-        # 2. Comando por Posição (CI)
-        ci_frame = ttk.LabelFrame(
-            right_frame, text="Comando por posição (CI)", padding=8
-        )
-        ci_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(ci_frame, text="x (m):").grid(
-            row=0, column=0, sticky=tk.W, padx=2
-        )
-        self.ent_x = ttk.Entry(ci_frame, width=8)
-        self.ent_x.grid(row=0, column=1, padx=5)
-
-        ttk.Label(ci_frame, text="y (m):").grid(
-            row=0, column=2, sticky=tk.W, padx=2
-        )
-        self.ent_y = ttk.Entry(ci_frame, width=8)
-        self.ent_y.grid(row=0, column=3, padx=5)
-
-        ttk.Label(ci_frame, text="cotovelo:").grid(
-            row=1, column=0, sticky=tk.W, pady=5
+        self.frame_principal.pack(
+            fill=tk.BOTH,
+            expand=True
         )
 
-        self.var_cotovelo = tk.StringVar(value="baixo")
+        # ====================================================
+        # ÁREA GRÁFICA
+        # ====================================================
 
-        rb_baixo = ttk.Radiobutton(
-            ci_frame,
-            text="baixo",
-            variable=self.var_cotovelo,
-            value="baixo",
+        self.frame_grafico = ttk.Frame(
+            self.frame_principal
         )
 
-        rb_cima = ttk.Radiobutton(
-            ci_frame, text="cima", variable=self.var_cotovelo, value="cima"
+        self.frame_grafico.pack(
+            side=tk.LEFT,
+            fill=tk.BOTH,
+            expand=True
         )
 
-        rb_baixo.grid(row=1, column=1, columnspan=2, sticky=tk.W)
-        rb_cima.grid(row=1, column=3, sticky=tk.W)
-
-        # 3. Limites Cinematicos
-        lim_frame = ttk.LabelFrame(right_frame, text="Limites", padding=8)
-        lim_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(lim_frame, text="ω_max (°/s):").grid(
-            row=0, column=0, sticky=tk.W
+        self.figura, self.ax = plt.subplots(
+            figsize=(7, 7)
         )
 
-        self.ent_vmax = ttk.Entry(lim_frame, width=8)
-        self.ent_vmax.insert(0, "90.0")
-        self.ent_vmax.grid(row=0, column=1, padx=5)
-
-        ttk.Label(lim_frame, text="α_max (°/s²):").grid(
-            row=0, column=2, sticky=tk.W
+        self.canvas = FigureCanvasTkAgg(
+            self.figura,
+            master=self.frame_grafico
         )
 
-        self.ent_amax = ttk.Entry(lim_frame, width=8)
-        self.ent_amax.insert(0, "300.0")
-        self.ent_amax.grid(row=0, column=3, padx=5)
-
-        # 4. Botões de Ação
-        btn_frame = ttk.Frame(right_frame)
-        btn_frame.pack(fill=tk.X, pady=10)
-
-        self.btn_mover = tk.Button(
-            btn_frame,
-            text="Mover",
-            bg="#2e7d32",
-            fg="white",
-            font=("Arial", 10, "bold"),
-            command=self._cmd_mover,
+        self.canvas.get_tk_widget().pack(
+            fill=tk.BOTH,
+            expand=True
         )
 
-        self.btn_mover.pack(fill=tk.X, pady=2)
+        # ====================================================
+        # PAINEL DE CONTROLE
+        # ====================================================
 
-        self.btn_carregar = tk.Button(
-            btn_frame,
-            text="Carregar pontos",
-            bg="#0277bd",
-            fg="white",
-            font=("Arial", 10, "bold"),
-            command=self._cmd_carregar_pontos,
+        self.frame_controle = ttk.Frame(
+            self.frame_principal,
+            padding=10
         )
 
-        self.btn_carregar.pack(fill=tk.X, pady=2)
-
-        self.btn_executar = tk.Button(
-            btn_frame,
-            text="Executar trajetória",
-            bg="#d84315",
-            fg="white",
-            font=("Arial", 10, "bold"),
-            command=self._cmd_executar_trajetoria,
-        )
-        self.btn_executar.pack(fill=tk.X, pady=2)
-
-        # BARRA DE STATUS (Rodapé)
-        self.lbl_status = ttk.Label(
-            main_frame,
-            text="Status: Pronto",
-            relief="sunken",
-            anchor=tk.W,
-            padding=5,
-        )
-        self.lbl_status.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
-
-    def _to_canvas(self, x, y):
-        """Converte coordenadas cartesianas (m) para coordenadas do Canvas (px)."""
-        px = self.cx + x * self.scale
-        py = self.cy - y * self.scale
-        return px, py
-
-    def _desenhar_espaco_e_robo(self):
-        self.canvas.delete("all")
-
-        # 1. Desenhar Eixos Cartesiano (x, y)
-        self.canvas.create_line(
-            0, self.cy, self.canvas_size, self.cy, fill="#cccccc", dash=(2, 4)
-        )
-        self.canvas.create_line(
-            self.cx, 0, self.cx, self.canvas_size, fill="#cccccc", dash=(2, 4)
+        self.frame_controle.pack(
+            side=tk.RIGHT,
+            fill=tk.Y
         )
 
-        # 2. Coroa Circular (Espaço de Trabalho)
-        x_ext_min, y_ext_min = self._to_canvas(-raio_ext, raio_ext)
-        x_ext_max, y_ext_max = self._to_canvas(raio_ext, -raio_ext)
-        self.canvas.create_oval(
-            x_ext_min,
-            y_ext_min,
-            x_ext_max,
-            y_ext_max,
-            outline="#2e7d32",
-            width=2,
+        self.criar_controles()
+
+        self.desenhar_robo()
+
+
+    def _ao_fechar(self):
+        self.movendo = False   # impede que animar()/animar_sequencia() se reagendem
+        self.root.quit()       # sai do mainloop
+        self.root.destroy()    # destrói a janela e libera os recursos
+
+
+    def criar_controles(self):
+
+        ttk.Label(
+            self.frame_controle,
+            text="Modo de Cinemática",
+            font=("Arial", 12, "bold")
+        ).pack(
+            pady=(0, 5)
         )
 
-        x_int_min, y_int_min = self._to_canvas(-raio_int, raio_int)
-        x_int_max, y_int_max = self._to_canvas(raio_int, -raio_int)
-        self.canvas.create_oval(
-            x_int_min,
-            y_int_min,
-            x_int_max,
-            y_int_max,
-            outline="#2e7d32",
-            width=1,
-            dash=(4, 4),
+        self.modo = tk.StringVar(
+            value="Direta (CD)"
         )
 
-        # 3. Rastro da Ferramenta
-        if len(self.rastro_pontos) > 1:
-            for i in range(len(self.rastro_pontos) - 1):
-                p1 = self._to_canvas(*self.rastro_pontos[i])
-                p2 = self._to_canvas(*self.rastro_pontos[i + 1])
-                self.canvas.create_line(p1, p2, fill="#e65100", width=2)
-
-        # 4. Posição dos elos do Braço Robótico
-        x1, y1 = L1 * cos(self.theta1_atual), L1 * sin(self.theta1_atual)
-        xf, yf = cinematica_direta(self.theta1_atual, self.theta2_atual)
-
-        p0 = self._to_canvas(0, 0)
-        p1 = self._to_canvas(x1, y1)
-        p2 = self._to_canvas(xf, yf)
-
-        # Elos
-        self.canvas.create_line(p0, p1, fill="#1b5e20", width=5)
-        self.canvas.create_line(p1, p2, fill="#1b5e20", width=4)
-
-        # Juntas (Origem, Cotovelo, Ferramenta)
-        self.canvas.create_oval(
-            p0[0] - 5,
-            p0[1] - 5,
-            p0[0] + 5,
-            p0[1] + 5,
-            fill="black",
-            outline="black",
-        )
-        self.canvas.create_oval(
-            p1[0] - 5,
-            p1[1] - 5,
-            p1[0] + 5,
-            p1[1] + 5,
-            fill="black",
-            outline="black",
-        )
-        self.canvas.create_oval(
-            p2[0] - 6, 
-            p2[1] - 6, 
-            p2[0] + 6, 
-            p2[1] + 6, 
-            fill="#d84315", 
-            outline=""
+        self.combo_modo = ttk.Combobox(
+            self.frame_controle,
+            textvariable=self.modo,
+            values=[
+                "Direta (CD)",
+                "Inversa (CI)"
+            ],
+            state="readonly",
+            width=20
         )
 
-    def _atualizar_interface_valores(self):
-        """Atualiza as caixas de texto com a pose atual em tempo real."""
-        x, y = cinematica_direta(self.theta1_atual, self.theta2_atual)
-        t1_deg = degrees(self.theta1_atual)
-        t2_deg = degrees(self.theta2_atual)
-
-        self.ent_theta1.delete(0, tk.END)
-        self.ent_theta1.insert(0, f"{t1_deg:.2f}")
-
-        self.ent_theta2.delete(0, tk.END)
-        self.ent_theta2.insert(0, f"{t2_deg:.2f}")
-
-        self.ent_x.delete(0, tk.END)
-        self.ent_x.insert(0, f"{x:.4f}")
-
-        self.ent_y.delete(0, tk.END)
-        self.ent_y.insert(0, f"{y:.4f}")
-
-        eh_alcancavel = alcancavel(x, y)
-
-        self.lbl_status.config(
-            text=f"Pose: (θ1 = {t1_deg:.1f} °, θ2 = {t2_deg:.1f} °) | (x = {x:.2f} m, y = {y:.2f} m) | "
-            f"Alcançável: {'Sim' if eh_alcancavel else 'Não'}"
+        self.combo_modo.pack(
+            pady=5
         )
 
-    def _obter_limites(self):
-        try:
-            v_deg = float(self.ent_vmax.get())
-            a_deg = float(self.ent_amax.get())
-            return radians(v_deg), radians(a_deg)
-        except ValueError:
-            messagebox.showerror(
-                "Erro de Entrada",
-                "Insira valores numéricos válidos para os limites de velocidade e aceleração.",
+        self.combo_modo.bind(
+            "<<ComboboxSelected>>",
+            self.atualizar_modo
+        )
+
+        self.frame_parametros = ttk.LabelFrame(
+            self.frame_controle,
+            text="Comando",
+            padding=10
+        )
+
+        self.frame_parametros.pack(
+            fill=tk.X,
+            pady=10
+        )
+
+        # theta1
+        ttk.Label(
+            self.frame_parametros,
+            text="θ1 (graus):"
+        ).grid(
+            row=0,
+            column=0,
+            sticky="w",
+            pady=4
+        )
+
+        self.entry_theta1 = ttk.Entry(
+            self.frame_parametros,
+            width=12
+        )
+
+        self.entry_theta1.grid(
+            row=0,
+            column=1
+        )
+
+        self.entry_theta1.insert(
+            0,
+            "0"
+        )
+
+        # theta2
+        ttk.Label(
+            self.frame_parametros,
+            text="θ2 (graus):"
+        ).grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=4
+        )
+
+        self.entry_theta2 = ttk.Entry(
+            self.frame_parametros,
+            width=12
+        )
+
+        self.entry_theta2.grid(
+            row=1,
+            column=1
+        )
+
+        self.entry_theta2.insert(
+            0,
+            "0"
+        )
+
+        # x
+        ttk.Label(
+            self.frame_parametros,
+            text="x (m):"
+        ).grid(
+            row=2,
+            column=0,
+            sticky="w",
+            pady=4
+        )
+
+        self.entry_x = ttk.Entry(
+            self.frame_parametros,
+            width=12
+        )
+
+        self.entry_x.grid(
+            row=2,
+            column=1
+        )
+
+        self.entry_x.insert(
+            0,
+            "0.25"
+        )
+
+        # y
+        ttk.Label(
+            self.frame_parametros,
+            text="y (m):"
+        ).grid(
+            row=3,
+            column=0,
+            sticky="w",
+            pady=4
+        )
+
+        self.entry_y = ttk.Entry(
+            self.frame_parametros,
+            width=12
+        )
+
+        self.entry_y.grid(
+            row=3,
+            column=1
+        )
+
+        self.entry_y.insert(
+            0,
+            "0.05"
+        )
+
+        # cotovelo
+        ttk.Label(
+            self.frame_parametros,
+            text="Cotovelo:"
+        ).grid(
+            row=4,
+            column=0,
+            sticky="w",
+            pady=4
+        )
+
+        self.cotovelo = tk.StringVar(
+            value="baixo"
+        )
+
+        self.combo_cotovelo = ttk.Combobox(
+            self.frame_parametros,
+            textvariable=self.cotovelo,
+            values=[
+                "baixo",
+                "cima"
+            ],
+            state="readonly",
+            width=10
+        )
+
+        self.combo_cotovelo.grid(
+            row=4,
+            column=1
+        )
+
+        # ----------------------------------------------------
+        # VELOCIDADE
+        # ----------------------------------------------------
+
+        self.frame_velocidade = ttk.LabelFrame(
+            self.frame_controle,
+            text="Perfil de Movimento",
+            padding=10
+        )
+
+        self.frame_velocidade.pack(
+            fill=tk.X,
+            pady=5
+        )
+
+        ttk.Label(
+            self.frame_velocidade,
+            text="ωmax (rad/s):"
+        ).grid(
+            row=0,
+            column=0,
+            sticky="w",
+            pady=4
+        )
+
+        self.entry_omega = ttk.Entry(
+            self.frame_velocidade,
+            width=12
+        )
+
+        self.entry_omega.grid(
+            row=0,
+            column=1
+        )
+
+        self.entry_omega.insert(
+            0,
+            "1.0"
+        )
+
+        ttk.Label(
+            self.frame_velocidade,
+            text="αmax (rad/s²):"
+        ).grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=4
+        )
+
+        self.entry_alpha = ttk.Entry(
+            self.frame_velocidade,
+            width=12
+        )
+
+        self.entry_alpha.grid(
+            row=1,
+            column=1
+        )
+
+        self.entry_alpha.insert(
+            0,
+            "2.0"
+        )
+
+        # ----------------------------------------------------
+        # BOTÕES
+        # ----------------------------------------------------
+
+        self.btn_mover = ttk.Button(
+            self.frame_controle,
+            text="▶ Mover",
+            command=self.executar_movimento
+        )
+
+        self.btn_mover.pack(
+            fill=tk.X,
+            pady=5
+        )
+
+        self.btn_carregar = ttk.Button(
+            self.frame_controle,
+            text="📂 Carregar pontos",
+            command=self.carregar_pontos
+        )
+
+        self.btn_carregar.pack(
+            fill=tk.X,
+            pady=5
+        )
+
+        self.btn_executar = ttk.Button(
+            self.frame_controle,
+            text="▶ Executar",
+            command=self.executar_pontos
+        )
+
+        self.btn_executar.pack(
+            fill=tk.X,
+            pady=5
+        )
+
+        # ----------------------------------------------------
+        # STATUS
+        # ----------------------------------------------------
+
+        self.frame_status = ttk.LabelFrame(
+            self.frame_controle,
+            text="Status",
+            padding=10
+        )
+
+        self.frame_status.pack(
+            fill=tk.BOTH,
+            expand=True,
+            pady=10
+        )
+
+        self.status = tk.StringVar()
+
+        self.label_status = ttk.Label(
+            self.frame_status,
+            textvariable=self.status,
+            justify=tk.LEFT,
+            wraplength=250
+        )
+
+        self.label_status.pack(
+            anchor="w"
+        )
+
+        self.atualizar_status()
+
+
+    # ========================================================
+    # ALTERAÇÃO DO MODO
+    # ========================================================
+
+    def atualizar_modo(self, event=None):
+
+        if self.modo.get() == "Direta (CD)":
+
+            self.entry_theta1.config(
+                state="normal"
             )
-            return None, None
 
-    def _animar_movimento(self, func_t1, func_t2, tempo_total, callback_fim=None):
-        """Anima o movimento suavemente recalculando a pose frame a frame."""
-        self.animating = True
-        t_atual = 0.0
+            self.entry_theta2.config(
+                state="normal"
+            )
 
-        def passo():
-            nonlocal t_atual
-            if t_atual <= tempo_total and self.animating:
-                self.theta1_atual = func_t1(t_atual)
-                self.theta2_atual = func_t2(t_atual)
+            self.entry_x.config(
+                state="disabled"
+            )
 
-                pos_ferramenta = cinematica_direta(
-                    self.theta1_atual, self.theta2_atual
+            self.entry_y.config(
+                state="disabled"
+            )
+
+            self.combo_cotovelo.config(
+                state="disabled"
+            )
+
+        else:
+
+            self.entry_theta1.config(
+                state="disabled"
+            )
+
+            self.entry_theta2.config(
+                state="disabled"
+            )
+
+            self.entry_x.config(
+                state="normal"
+            )
+
+            self.entry_y.config(
+                state="normal"
+            )
+
+            self.combo_cotovelo.config(
+                state="readonly"
+            )
+
+
+    # ========================================================
+    # DESENHAR ROBÔ
+    # ========================================================
+
+    def desenhar_robo(self):
+
+        self.ax.clear()
+
+        theta1 = self.theta1_atual
+        theta2 = self.theta2_atual
+
+        # Juntas
+        x0 = 0
+        y0 = 0
+
+        x1 = L1 * cos(theta1)
+        y1 = L1 * sin(theta1)
+
+        x2 = (
+            x1
+            +
+            L2 * cos(theta1 + theta2)
+        )
+
+        y2 = (
+            y1
+            +
+            L2 * sin(theta1 + theta2)
+        )
+
+        self.rastro_y.append(y2)
+        self.rastro_x.append(x2)
+
+        # ----------------------------------------------------
+        # ESPAÇO DE TRABALHO
+        # ----------------------------------------------------
+
+        circulo_ext = Circle(
+            (0, 0),
+            raio_ext,
+            fill=False,
+            linestyle="--"
+        )
+
+        circulo_int = Circle(
+            (0, 0),
+            raio_int,
+            fill=False,
+            linestyle="--"
+        )
+
+        self.ax.add_patch(
+            circulo_ext
+        )
+
+        self.ax.add_patch(
+            circulo_int
+        )
+
+        # ----------------------------------------------------
+        # BRAÇO
+        # ----------------------------------------------------
+
+        self.ax.plot(
+            [x0, x1],
+            [y0, y1],
+            linewidth=6,
+            solid_capstyle="round"
+        )
+
+        self.ax.plot(
+            [x1, x2],
+            [y1, y2],
+            linewidth=6,
+            solid_capstyle="round"
+        )
+
+        # ----------------------------------------------------
+        # JUNTAS
+        # ----------------------------------------------------
+
+        self.ax.plot(
+            x0,
+            y0,
+            "o",
+            markersize=12
+        )
+
+        self.ax.plot(
+            x1,
+            y1,
+            "o",
+            markersize=10
+        )
+
+        self.ax.plot(
+            x2,
+            y2,
+            "o",
+            markersize=8
+        )
+
+        # ----------------------------------------------------
+        # TRAJETÓRIA / PONTO ATUAL
+        # ----------------------------------------------------
+
+        self.ax.plot(
+            x2,
+            y2,
+            "x",
+            markersize=12,
+            markeredgewidth=3
+        )
+
+        self.ax.plot(
+            self.rastro_x, self.rastro_y,
+            "-", color="red", linewidth=1, alpha=0.4,
+        )
+
+        # ----------------------------------------------------
+        # EIXOS
+        # ----------------------------------------------------
+
+        limite = raio_ext + 0.05
+
+        self.ax.axhline(
+            0,
+            linewidth=1
+        )
+
+        self.ax.axvline(
+            0,
+            linewidth=1
+        )
+
+        self.ax.set_xlim(
+            -limite,
+            limite
+        )
+
+        self.ax.set_ylim(
+            -limite,
+            limite
+        )
+
+        self.ax.set_aspect(
+            "equal"
+        )
+
+        self.ax.grid(
+            True,
+            alpha=0.3
+        )
+
+        self.ax.set_xlabel(
+            "x (m)"
+        )
+
+        self.ax.set_ylabel(
+            "y (m)"
+        )
+
+        self.ax.set_title(
+            "Robô SCARA 2GDL"
+        )
+
+        self.canvas.draw_idle()
+
+
+
+    # ========================================================
+    # STATUS
+    # ========================================================
+
+    def atualizar_status(self):
+
+        x, y = cinematica_direta(
+            self.theta1_atual,
+            self.theta2_atual
+        )
+
+        alcance = alcancavel(
+            x,
+            y
+        )
+
+        if alcance:
+            alcance_txt = "ALCANÇÁVEL"
+        else:
+            alcance_txt = "FORA DO ALCANCE"
+
+        self.status.set(
+            f"θ1 = {degrees(self.theta1_atual):.2f}°\n"
+            f"θ2 = {degrees(self.theta2_atual):.2f}°\n\n"
+            f"X = {x:.4f} m\n"
+            f"Y = {y:.4f} m\n\n"
+            f"Status: {alcance_txt}"
+        )
+
+
+    # ========================================================
+    # MOVIMENTO
+    # ========================================================
+
+    def executar_movimento(self):
+
+        if self.movendo:
+            return
+
+        try:
+
+            omega_max = float(
+                self.entry_omega.get()
+            )
+
+            alpha_max = float(
+                self.entry_alpha.get()
+            )
+
+            if omega_max <= 0 or alpha_max <= 0:
+                raise ValueError(
+                    "ωmax e αmax devem ser positivos."
                 )
-                self.rastro_pontos.append(pos_ferramenta)
 
-                self._desenhar_espaco_e_robo()
-                self._atualizar_interface_valores()
+            # -----------------------------------------------
+            # MODO DIRETO
+            # -----------------------------------------------
 
-                t_atual += self.dt
-                self.root.after(int(self.dt * 1000), passo)
+            if self.modo.get() == "Direta (CD)":
+
+                theta1_fim = radians(
+                    float(
+                        self.entry_theta1.get()
+                    )
+                )
+
+                theta2_fim = radians(
+                    float(
+                        self.entry_theta2.get()
+                    )
+                )
+
+                inicio = [
+                    self.theta1_atual,
+                    self.theta2_atual
+                ]
+
+                fim = [
+                    theta1_fim,
+                    theta2_fim
+                ]
+
+                modo = "direta"
+
+            # -----------------------------------------------
+            # MODO INVERSO
+            # -----------------------------------------------
+
             else:
-                self.animating = False
-                if callback_fim:
-                    callback_fim()
 
-        passo()
-
-    def _cmd_mover(self):
-        if self.animating:
-            return
-
-        w_max, a_max = self._obter_limites()
-        if w_max is None:
-            return
-
-        # Tenta ler CI primeiro, se falhar ou não bater, lê CD
-        try:
-            x_alvo = float(self.ent_x.get())
-            y_alvo = float(self.ent_y.get())
-            cotovelo = self.var_cotovelo.get()
-
-            if not alcancavel(x_alvo, y_alvo):
-                messagebox.showwarning(
-                    "Fora de Alcance",
-                    f"Ponto ({x_alvo}, {y_alvo}) está fora da coroa do espaço de trabalho!",
+                x = float(
+                    self.entry_x.get()
                 )
-                return
 
-            t1_fim, t2_fim = cinematica_inversa(x_alvo, y_alvo, cotovelo)
-        except ValueError:
-            # Caso não seja número no X,Y lê o ângulo diretamente
-            try:
-                t1_fim = radians(float(self.ent_theta1.get()))
-                t2_fim = radians(float(self.ent_theta2.get()))
-            except ValueError:
-                messagebox.showerror(
-                    "Erro", "Verifique as coordenadas/ângulos digitados."
+                y = float(
+                    self.entry_y.get()
                 )
-                return
 
-        # Mover via juntas sincronizadas
-        f_t1, f_t2, _, _, T = mover(
-            "direta",
-            [self.theta1_atual, self.theta2_atual],
-            [t1_fim, t2_fim],
-            w_max,
-            a_max,
-        )
+                if not alcancavel(x, y):
 
-        self._animar_movimento(f_t1, f_t2, T)
+                    messagebox.showerror(
+                        "Ponto inválido",
+                        "O ponto informado está fora "
+                        "do espaço de trabalho."
+                    )
 
-    def _cmd_carregar_pontos(self):
-        filepath = filedialog.askopenfilename(
-            filetypes=[("Arquivos CSV", "*.csv"), ("Todos os arquivos", "*.*")]
-        )
-        if not filepath:
-            return
+                    return
 
-        self.pontos_carregados.clear()
-        try:
-            with open(filepath, "r") as f:
-                reader = csv.reader(f)
-                for line in reader:
-                    if not line or line[0].strip().startswith("#"):
-                        continue
-                    x = float(line[0].strip())
-                    y = float(line[1].strip())
-                    cotovelo_flag = int(line[2].strip())
-                    cotovelo_str = "cima" if cotovelo_flag == 1 else "baixo"
-                    self.pontos_carregados.append((x, y, cotovelo_str))
+                modo = "inversa"
 
-            messagebox.showinfo(
-                "Sucesso",
-                f"{len(self.pontos_carregados)} pontos carregados do arquivo!",
+                inicio = cinematica_direta(
+                    self.theta1_atual,
+                    self.theta2_atual
+                )
+
+                fim = [
+                    x,
+                    y
+                ]
+
+            # -----------------------------------------------
+            # GERAR PERFIL
+            # -----------------------------------------------
+
+            (
+                self.func_theta1,
+                self.func_theta2,
+                self.func_vel1,
+                self.func_vel2,
+                self.tempo_movimento
+            ) = mover(
+                modo,
+                inicio,
+                fim,
+                omega_max,
+                alpha_max,
+                self.cotovelo.get()
             )
-            self.lbl_status.config(
-                text=f"Status: {len(self.pontos_carregados)} pontos CSV prontos para execução."
-            )
-        except Exception as e:
+
+            self.tempo_atual = 0.0
+
+            self.movendo = True
+
+            self.animar()
+
+        except Exception as erro:
+
             messagebox.showerror(
-                "Erro de Leitura", f"Erro ao ler arquivo CSV:\n{e}"
+                "Erro",
+                str(erro)
             )
 
-    def _cmd_executar_trajetoria(self):
-        if self.animating:
+
+    # ========================================================
+    # ANIMAÇÃO
+    # ========================================================
+
+    def animar(self):
+
+        if not self.movendo:
             return
 
-        if not self.pontos_carregados:
+        t = self.tempo_atual
+
+        if t >= self.tempo_movimento:
+
+            self.theta1_atual = (
+                self.func_theta1(
+                    self.tempo_movimento
+                )
+            )
+
+            self.theta2_atual = (
+                self.func_theta2(
+                    self.tempo_movimento
+                )
+            )
+
+            self.movendo = False
+
+            self.desenhar_robo()
+
+            self.atualizar_status()
+
+            return
+
+        # ----------------------------------------------------
+        # ATUALIZA ÂNGULOS
+        # ----------------------------------------------------
+
+        self.theta1_atual = (
+            self.func_theta1(t)
+        )
+
+        self.theta2_atual = (
+            self.func_theta2(t)
+        )
+
+        # ----------------------------------------------------
+        # REDESENHA
+        # ----------------------------------------------------
+
+        self.desenhar_robo()
+
+        self.atualizar_status()
+
+        # ----------------------------------------------------
+        # PRÓXIMO FRAME
+        # ----------------------------------------------------
+
+        self.tempo_atual += 1 / QPS
+
+        self.root.after(
+            int(1000 / QPS),
+            self.animar
+        )
+
+
+    # ========================================================
+    # CARREGAR PONTOS
+    # ========================================================
+
+    def carregar_pontos(self):
+        arquivo = filedialog.askopenfilename(
+            title="Selecionar arquivo de pontos",
+            filetypes=[("Arquivo texto", "*.txt"), ("Arquivo CSV", "*.csv"), ("Todos", "*.*")],
+        )
+        if not arquivo:
+            return
+
+        self.pontos.clear()
+        avisos = []
+
+        with open(arquivo, "r", encoding="utf-8") as f:
+            for n_linha, linha in enumerate(f, start=1):
+                linha = linha.strip()
+
+                if not linha or linha.startswith("#"):
+                    continue  # pula linhas vazias e comentários
+
+                valores = linha.replace(",", " ").split()
+                if len(valores) < 2:
+                    avisos.append(f"linha {n_linha}: formato inválido, ignorada")
+                    continue
+
+                try:
+                    x = float(valores[0])
+                    y = float(valores[1])
+                except ValueError:
+                    avisos.append(f"linha {n_linha}: x/y inválidos, ignorada")
+                    continue
+
+                if not alcancavel(x, y):
+                    avisos.append(f"linha {n_linha}: ({x}, {y}) fora do alcance, ignorado")
+                    continue
+
+                # terceira coluna opcional: 0 = baixo (padrão), 1 = cima
+                cotovelo = "cima" if len(valores) >= 3 and valores[2].strip() == "1" else "baixo"
+                self.pontos.append((x, y, cotovelo))
+
+        msg = f"{len(self.pontos)} ponto(s) carregado(s)."
+        if avisos:
+            msg += "\n\nAvisos:\n" + "\n".join(avisos)
+        messagebox.showinfo("Pontos carregados", msg)
+
+
+    def executar_pontos(self):
+
+        if not self.pontos:
+
             messagebox.showwarning(
-                "Nenhum Ponto",
-                "Carregue um arquivo CSV de pontos primeiro!",
+                "Aviso",
+                "Nenhum ponto foi carregado."
             )
+
             return
 
-        w_max, a_max = self._obter_limites()
-        if w_max is None:
+        if self.movendo:
             return
 
-        self.rastro_pontos.clear()
-        queue = list(self.pontos_carregados)
+        self.indice_ponto = 0
 
-        def processar_proximo_ponto():
-            if not queue:
-                self.lbl_status.config(
-                    text="Status: Trajetória do arquivo finalizada com sucesso!"
+        self.executar_proximo_ponto()
+
+
+    def executar_proximo_ponto(self):
+
+        if self.indice_ponto >= len(self.pontos):
+
+            self.status.set(
+                "Execução concluída!"
+            )
+
+            return
+
+        x, y, cotovelo_ponto = self.pontos[
+            self.indice_ponto
+        ]
+
+        self.entry_x.config(
+            state="normal"
+        )
+
+        self.entry_y.config(
+            state="normal"
+        )
+
+        self.entry_x.delete(
+            0,
+            tk.END
+        )
+
+        self.entry_x.insert(
+            0,
+            str(x)
+        )
+
+        self.entry_y.delete(
+            0,
+            tk.END
+        )
+
+        self.entry_y.insert(
+            0,
+            str(y)
+        )
+
+        self.entry_x.config(
+            state="disabled"
+        )
+
+        self.entry_y.config(
+            state="disabled"
+        )
+
+        try:
+
+            omega_max = float(
+                self.entry_omega.get()
+            )
+
+            alpha_max = float(
+                self.entry_alpha.get()
+            )
+
+            inicio = cinematica_direta(
+                self.theta1_atual,
+                self.theta2_atual
+            )
+
+            fim = [
+                x,
+                y
+            ]
+
+            (
+                self.func_theta1,
+                self.func_theta2,
+                _,
+                _,
+                self.tempo_movimento
+            ) = mover(
+                "inversa",
+                inicio,
+                fim,
+                omega_max,
+                alpha_max,
+                cotovelo_ponto
+            )
+
+            self.tempo_atual = 0
+
+            self.movendo = True
+
+            self.animar_sequencia()
+
+        except Exception as erro:
+
+            messagebox.showerror(
+                "Erro",
+                str(erro)
+            )
+
+
+    # ========================================================
+    # ANIMAÇÃO DA SEQUÊNCIA
+    # ========================================================
+
+    def animar_sequencia(self):
+
+        if not self.movendo:
+            return
+
+        t = self.tempo_atual
+
+        if t >= self.tempo_movimento:
+
+            self.theta1_atual = (
+                self.func_theta1(
+                    self.tempo_movimento
                 )
-                return
+            )
 
-            x, y, cotovelo = queue.pop(0)
-
-            # Validação de alcançabilidade antes da execução
-            if not alcancavel(x, y):
-                self.lbl_status.config(
-                    text=f"Status: Ponto ({x:.2f}, {y:.2f}) ignorado (FORA DO ESPAÇO!)."
+            self.theta2_atual = (
+                self.func_theta2(
+                    self.tempo_movimento
                 )
-                self.root.after(500, processar_proximo_ponto)
-                return
+            )
 
-            try:
-                t1_fim, t2_fim = cinematica_inversa(x, y, cotovelo)
-                f_t1, f_t2, _, _, T = mover(
-                    "direta",
-                    [self.theta1_atual, self.theta2_atual],
-                    [t1_fim, t2_fim],
-                    w_max,
-                    a_max,
-                )
-                self._animar_movimento(
-                    f_t1, f_t2, T, callback_fim=processar_proximo_ponto
-                )
-            except Exception as ex:
-                print(f"Erro ao calcular ponto ({x}, {y}): {ex}")
-                processar_proximo_ponto()
+            self.desenhar_robo()
 
-        processar_proximo_ponto()
+            self.atualizar_status()
+
+            self.movendo = False
+
+            self.indice_ponto += 1
+
+            self.root.after(
+                300,
+                self.executar_proximo_ponto
+            )
+
+            return
+
+        self.theta1_atual = (
+            self.func_theta1(t)
+        )
+
+        self.theta2_atual = (
+            self.func_theta2(t)
+        )
+
+        self.desenhar_robo()
+
+        self.atualizar_status()
+
+        self.tempo_atual += 1 / QPS
+
+        self.root.after(
+            int(1000 / QPS),
+            self.animar_sequencia
+        )
+
+
 
 
 L1 = 0.2    # comprimento do primeiro braço (metros)
 L2 = 0.15   # comprimento do segundo braço (metros)
 
-raio_ext = L1 + L2  # raio externo (metros)
-raio_int = abs(L1 - L2)  # raio interno (metros)
+
+raio_ext = L1 + L2    # raio externo (metros)
+raio_int = abs(L1 - L2)    # raio interno (metros)
 
 TOLERANCIA = 1e-9
+QPS = 50    # 50 quadros por segundo
 
-# ==============================================================================
-# INICIALIZAÇÃO DA APLICAÇÃO
-# ==============================================================================
+
 if __name__ == "__main__":
+
     root = tk.Tk()
-    tela = Tela(root)
+
+    app = RoboSCARA(root)
+
+    app.atualizar_modo()
+
     root.mainloop()
-
-
