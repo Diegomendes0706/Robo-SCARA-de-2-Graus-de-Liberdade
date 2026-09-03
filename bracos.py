@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Circle
 
+
+
+
 def cinematica_direta(theta1: float, theta2: float) -> tuple:
     """
     Calcula a posição (x, y) do ponto final do braço robótico
@@ -193,18 +196,9 @@ class RoboSCARA:
 
         self.root.protocol("WM_DELETE_WINDOW", self._ao_fechar)
 
+        self.root.title("SCARA 2GDL - Controle e Cinemática")
 
-        self.root.title(
-            "SCARA 2GDL - Controle e Cinemática"
-        )
-
-        self.root.geometry(
-            "1200x750"
-        )
-
-        # ----------------------------------------------------
-        # ESTADO ATUAL DO ROBÔ
-        # ----------------------------------------------------
+        self.root.geometry("1200x750")
 
         self.theta1_atual = 0.0
         self.theta2_atual = 0.0
@@ -216,10 +210,6 @@ class RoboSCARA:
         self.rastro_x = []
         self.rastro_y = []
 
-        # ----------------------------------------------------
-        # FRAME PRINCIPAL
-        # ----------------------------------------------------
-
         self.frame_principal = ttk.Frame(
             root
         )
@@ -228,10 +218,6 @@ class RoboSCARA:
             fill=tk.BOTH,
             expand=True
         )
-
-        # ====================================================
-        # ÁREA GRÁFICA
-        # ====================================================
 
         self.frame_grafico = ttk.Frame(
             self.frame_principal
@@ -256,10 +242,6 @@ class RoboSCARA:
             fill=tk.BOTH,
             expand=True
         )
-
-        # ====================================================
-        # PAINEL DE CONTROLE
-        # ====================================================
 
         self.frame_controle = ttk.Frame(
             self.frame_principal,
@@ -461,11 +443,7 @@ class RoboSCARA:
             row=4,
             column=1
         )
-
-        # ----------------------------------------------------
-        # VELOCIDADE
-        # ----------------------------------------------------
-
+        
         self.frame_velocidade = ttk.LabelFrame(
             self.frame_controle,
             text="Perfil de Movimento",
@@ -479,7 +457,7 @@ class RoboSCARA:
 
         ttk.Label(
             self.frame_velocidade,
-            text="ωmax (rad/s):"
+            text="ω_max (rad/s):"
         ).grid(
             row=0,
             column=0,
@@ -527,9 +505,7 @@ class RoboSCARA:
             "2.0"
         )
 
-        # ----------------------------------------------------
-        # BOTÕES
-        # ----------------------------------------------------
+
 
         self.btn_mover = ttk.Button(
             self.frame_controle,
@@ -563,11 +539,7 @@ class RoboSCARA:
             fill=tk.X,
             pady=5
         )
-
-        # ----------------------------------------------------
-        # STATUS
-        # ----------------------------------------------------
-
+        
         self.frame_status = ttk.LabelFrame(
             self.frame_controle,
             text="Status",
@@ -596,9 +568,6 @@ class RoboSCARA:
         self.atualizar_status()
 
 
-    # ========================================================
-    # ALTERAÇÃO DO MODO
-    # ========================================================
 
     def atualizar_modo(self, event=None):
 
@@ -647,10 +616,6 @@ class RoboSCARA:
             )
 
 
-    # ========================================================
-    # DESENHAR ROBÔ
-    # ========================================================
-
     def desenhar_robo(self):
 
         self.ax.clear()
@@ -665,24 +630,13 @@ class RoboSCARA:
         x1 = L1 * cos(theta1)
         y1 = L1 * sin(theta1)
 
-        x2 = (
-            x1
-            +
-            L2 * cos(theta1 + theta2)
-        )
+        x2 = (x1 + L2 * cos(theta1 + theta2))
 
-        y2 = (
-            y1
-            +
-            L2 * sin(theta1 + theta2)
-        )
+        y2 = (y1+ L2 * sin(theta1 + theta2))
 
         self.rastro_y.append(y2)
         self.rastro_x.append(x2)
 
-        # ----------------------------------------------------
-        # ESPAÇO DE TRABALHO
-        # ----------------------------------------------------
 
         circulo_ext = Circle(
             (0, 0),
@@ -706,9 +660,6 @@ class RoboSCARA:
             circulo_int
         )
 
-        # ----------------------------------------------------
-        # BRAÇO
-        # ----------------------------------------------------
 
         self.ax.plot(
             [x0, x1],
@@ -723,10 +674,7 @@ class RoboSCARA:
             linewidth=6,
             solid_capstyle="round"
         )
-
-        # ----------------------------------------------------
-        # JUNTAS
-        # ----------------------------------------------------
+        
 
         self.ax.plot(
             x0,
@@ -748,11 +696,7 @@ class RoboSCARA:
             "o",
             markersize=8
         )
-
-        # ----------------------------------------------------
-        # TRAJETÓRIA / PONTO ATUAL
-        # ----------------------------------------------------
-
+        
         self.ax.plot(
             x2,
             y2,
@@ -766,9 +710,6 @@ class RoboSCARA:
             "-", color="red", linewidth=1, alpha=0.4,
         )
 
-        # ----------------------------------------------------
-        # EIXOS
-        # ----------------------------------------------------
 
         limite = raio_ext + 0.05
 
@@ -817,10 +758,6 @@ class RoboSCARA:
 
 
 
-    # ========================================================
-    # STATUS
-    # ========================================================
-
     def atualizar_status(self):
 
         x, y = cinematica_direta(
@@ -828,10 +765,7 @@ class RoboSCARA:
             self.theta2_atual
         )
 
-        alcance = alcancavel(
-            x,
-            y
-        )
+        alcance = alcancavel(x, y)
 
         if alcance:
             alcance_txt = "ALCANÇÁVEL"
@@ -847,9 +781,6 @@ class RoboSCARA:
         )
 
 
-    # ========================================================
-    # MOVIMENTO
-    # ========================================================
 
     def executar_movimento(self):
 
@@ -867,13 +798,8 @@ class RoboSCARA:
             )
 
             if omega_max <= 0 or alpha_max <= 0:
-                raise ValueError(
-                    "ωmax e αmax devem ser positivos."
-                )
+                raise ValueError("ω_max e α_max devem ser positivos.")
 
-            # -----------------------------------------------
-            # MODO DIRETO
-            # -----------------------------------------------
 
             if self.modo.get() == "Direta (CD)":
 
@@ -889,21 +815,11 @@ class RoboSCARA:
                     )
                 )
 
-                inicio = [
-                    self.theta1_atual,
-                    self.theta2_atual
-                ]
+                inicio = [self.theta1_atual, self.theta2_atual]
 
-                fim = [
-                    theta1_fim,
-                    theta2_fim
-                ]
+                fim = [theta1_fim, theta2_fim]
 
                 modo = "direta"
-
-            # -----------------------------------------------
-            # MODO INVERSO
-            # -----------------------------------------------
 
             else:
 
@@ -932,14 +848,7 @@ class RoboSCARA:
                     self.theta2_atual
                 )
 
-                fim = [
-                    x,
-                    y
-                ]
-
-            # -----------------------------------------------
-            # GERAR PERFIL
-            # -----------------------------------------------
+                fim = [x, y]
 
             (
                 self.func_theta1,
@@ -970,10 +879,6 @@ class RoboSCARA:
             )
 
 
-    # ========================================================
-    # ANIMAÇÃO
-    # ========================================================
-
     def animar(self):
 
         if not self.movendo:
@@ -1002,30 +907,14 @@ class RoboSCARA:
             self.atualizar_status()
 
             return
+        
+        self.theta1_atual = (self.func_theta1(t))
 
-        # ----------------------------------------------------
-        # ATUALIZA ÂNGULOS
-        # ----------------------------------------------------
-
-        self.theta1_atual = (
-            self.func_theta1(t)
-        )
-
-        self.theta2_atual = (
-            self.func_theta2(t)
-        )
-
-        # ----------------------------------------------------
-        # REDESENHA
-        # ----------------------------------------------------
+        self.theta2_atual = (self.func_theta2(t))
 
         self.desenhar_robo()
 
         self.atualizar_status()
-
-        # ----------------------------------------------------
-        # PRÓXIMO FRAME
-        # ----------------------------------------------------
 
         self.tempo_atual += 1 / QPS
 
@@ -1035,9 +924,6 @@ class RoboSCARA:
         )
 
 
-    # ========================================================
-    # CARREGAR PONTOS
-    # ========================================================
 
     def carregar_pontos(self):
         arquivo = filedialog.askopenfilename(
@@ -1106,9 +992,7 @@ class RoboSCARA:
 
         if self.indice_ponto >= len(self.pontos):
 
-            self.status.set(
-                "Execução concluída!"
-            )
+            self.status.set("Execução concluída!")
 
             return
 
@@ -1167,10 +1051,7 @@ class RoboSCARA:
                 self.theta2_atual
             )
 
-            fim = [
-                x,
-                y
-            ]
+            fim = [x, y]
 
             (
                 self.func_theta1,
@@ -1199,11 +1080,6 @@ class RoboSCARA:
                 "Erro",
                 str(erro)
             )
-
-
-    # ========================================================
-    # ANIMAÇÃO DA SEQUÊNCIA
-    # ========================================================
 
     def animar_sequencia(self):
 
@@ -1241,22 +1117,18 @@ class RoboSCARA:
 
             return
 
-        self.theta1_atual = (
-            self.func_theta1(t)
-        )
+        self.theta1_atual = (self.func_theta1(t))
 
-        self.theta2_atual = (
-            self.func_theta2(t)
-        )
+        self.theta2_atual = (self.func_theta2(t))
 
         self.desenhar_robo()
 
         self.atualizar_status()
 
-        self.tempo_atual += 1 / QPS
+        self.tempo_atual += dt
 
         self.root.after(
-            int(1000 / QPS),
+            int(1000*dt),
             self.animar_sequencia
         )
 
@@ -1266,13 +1138,13 @@ class RoboSCARA:
 L1 = 0.2    # comprimento do primeiro braço (metros)
 L2 = 0.15   # comprimento do segundo braço (metros)
 
-
 raio_ext = L1 + L2    # raio externo (metros)
 raio_int = abs(L1 - L2)    # raio interno (metros)
 
 TOLERANCIA = 1e-9
-QPS = 50    # 50 quadros por segundo
 
+QPS = 50    # 50 quadros por segundo
+dt = 1 / QPS    # intervalo de tempo entre quadros (segundos)
 
 if __name__ == "__main__":
 
